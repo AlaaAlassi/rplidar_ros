@@ -36,8 +36,9 @@ RPlidarDriver * drv = NULL;
 rclcpp::Node::SharedPtr g_node = nullptr;
 using namespace std::chrono_literals;
 
-/* This example creates a subclass of Node and uses std::bind() to register a
- * member function as a callback from the timer. */
+/* This class is a subclass of rclcpp::Node
+It contains necessery functions to interface the lidar modul "rplidar"
+with ros2 */
 
 class rplidarNode : public rclcpp::Node
 {
@@ -50,6 +51,10 @@ public:
       500ms, std::bind(&rplidarNode::timer_callback, this));
   }
 
+//member variabels 
+int angle_compensate_multiple = 1;
+RplidarScanMode current_scan_mode;
+float max_distance = 8.0;
 
 bool start_motor(std_srvs::srv::Empty::Request &req, std_srvs::srv::Empty::Response &res)
 {
@@ -89,6 +94,8 @@ void test()
   RCLCPP_INFO(this->get_logger(),"Stop motor");
 }
 
+
+
 bool bindLidarSerialPoart()
 {
 
@@ -96,15 +103,69 @@ bool bindLidarSerialPoart()
         RCLCPP_INFO(this->get_logger(),"Error, cannot bind to the specified serial port %s.",this->serial_port_.c_str());
         RPlidarDriver::DisposeDriver(drv);
         return -1;
+   }
 }
 
+u_result getScanResult(const std::string &scan_mode)
+{
+
+
+    if (scan_mode.empty()) {
+        return drv->startScan(false /* not force scan */, true /* use typical scan mode */, 0, &current_scan_mode);
+    }
+
+    std::vector<RplidarScanMode> allSupportedScanModes;
+    u_result op_result = drv->getAllSupportedScanModes(allSupportedScanModes);
+
+    if (not IS_OK(op_result)) {
+      return op_result;
+    }
+
+
+    auto selectedScanModeiter = std::find_if(
+      allSupportedScanModes.begin(), 
+      allSupportedScanModes.end(), 
+      [&scan_mode](const RplidarScanMode& rpsmode)
+      { 
+        return rpsmode.scan_mode == scan_mode; 
+      });
+
+    if (selectedScanModeiter != allSupportedScanModes.end()) {
+        RCLCPP_INFO(this->get_logger(),"scan mode `%s' is not supported by lidar, supported modes:", scan_mode.c_str());
+        for (std::vector<RplidarScanMode>::iterator iter = allSupportedScanModes.begin(); iter != allSupportedScanModes.end(); iter++) {
+            RCLCPP_INFO(this->get_logger(),"\t%s: max_distance: %.1f m, Point number: %.1fK",  iter->scan_mode,
+                    iter->max_distance, (1000/iter->us_per_sample));
+        }
+        return RESULT_OPERATION_FAIL;
+    }
+        
+    return drv->startScanExpress(false /* not force scan */, selectedScanModeiter->id, 0, &current_scan_mode);
 
 }
-      // make connection...
+
+void verifyScanResult(u_result op_result)
+{
+
+    if(IS_OK(op_result))
+    {
+
+        //default frequent is 10 hz (by motor pwm value),  current_scan_mode.us_per_sample is the number of scan point per us
+        this->angle_compensate_multiple = (int)(1000*1000/current_scan_mode.us_per_sample/10.0/360.0);
+        if(angle_compensate_multiple < 1) 
+          angle_compensate_multiple = 1;
+        max_distance = current_scan_mode.max_distance;
+        RCLCPP_INFO(this->get_logger(),"current scan mode: %s, max_distance: %.1f m, Point number: %.1fK , angle_compensate: %d",  current_scan_mode.scan_mode,
+                 current_scan_mode.max_distance, (1000/current_scan_mode.us_per_sample), angle_compensate_multiple);
+    }
+    else
+    {
+        RCLCPP_ERROR(this->get_logger(),"Can not start scan: %08x!", op_result);
+    }
 
 
+}
 
-
+int angle_compensate_multiple_ = 1;//it stand of angle compensate at per 1 degree
 
 private:
   void timer_callback()
@@ -115,7 +176,7 @@ private:
   double scan_frequency = 2500;
   float angle_min = DEG2RAD(0.0f);
   float angle_max = DEG2RAD(359.0f);
-  float max_distance = 8.0;
+  
 
   auto msg = std::make_shared<sensor_msgs::msg::LaserScan>();
   msg->header.frame_id = "laser_frame";
@@ -146,16 +207,6 @@ private:
   int serial_baudrate_ = 256000;
 };
 
- void handle_service(
-  const std::shared_ptr<rmw_request_id_t> request_header,
-  const std::shared_ptr<std_srvs::srv::Empty::Request> request,
-  const std::shared_ptr<std_srvs::srv::Empty::Response> response)
-{
-  (void)request_header;
-  RCLCPP_INFO(g_node->get_logger(), "Start motor");
-   if(!drv){std::cout << "no";};
-  drv->stopMotor();
-}
 
 
 int main(int argc, char * argv[])
@@ -163,22 +214,18 @@ int main(int argc, char * argv[])
   drv = RPlidarDriver::CreateDriver(rp::standalone::rplidar::DRIVER_TYPE_SERIALPORT);
   rclcpp::init(argc, argv);
   rplidarNode node;
-  rplidarNode::SharedPtr ptrnode;
-
-
-  
   node.bindLidarSerialPoart();
 
   // Star The lidar"s motor
  // auto server = node.create_service<std_srvs::srv::Empty>("start_motor", handle_service); //rplidarNode::handle_service
   drv->startMotor();
 
+  u_result op_result = node.getScanResult("scan_mode");
+
 
   rclcpp::spin(std::make_shared<rplidarNode>());
 
   rclcpp::shutdown();
-
-  
 
   return 0;
 }
