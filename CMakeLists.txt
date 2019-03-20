@@ -9,10 +9,6 @@ endif()
 
 set(RPLIDAR_SDK_PATH ${CMAKE_CURRENT_SOURCE_DIR}/sdk)
 
-
-message("#################" ${RPLIDAR_SDK_PATH})
-
-
 FILE(GLOB RPLIDAR_SDK_SRC 
   "${RPLIDAR_SDK_PATH}/src/arch/linux/*.cpp"
   "${RPLIDAR_SDK_PATH}/src/hal/*.cpp"
@@ -28,10 +24,10 @@ FILE(GLOB rplidar_sdk_INCLUDE_DIRS
 
 include_directories(${RPLIDAR_SDK_PATH}/src/)
 include_directories(${RPLIDAR_SDK_PATH}/include/)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include/)
 
 
-
-add_executable(rplidarNode src/node.cpp ${RPLIDAR_SDK_SRC})
+add_executable(rplidarNode src/rplidar_node.cpp ${RPLIDAR_SDK_SRC})
 
 add_executable(rplidarNodeClient src/client.cpp)
 find_package(ament_cmake REQUIRED)
